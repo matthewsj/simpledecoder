@@ -12,6 +12,7 @@ module SimpleDecoder
         , null
         , field
         , at
+        , list
         , map
         , map2
         , oneOf
@@ -23,7 +24,7 @@ module SimpleDecoder
 @docs JsonValue, readJsonValue, toJsonValue, wrapPort
 
 Functions and types for manipulating JsonValue values:
-@docs SDecoder, string, int, float, bool, null, field, at, map, map2, oneOf, andThen
+@docs SDecoder, string, int, float, bool, null, field, at, list, map, map2, oneOf, andThen
 
 -}
 
@@ -194,6 +195,12 @@ type alias SDecoder t =
 {-| Returns the value at the field with the given name.
 -}
 field : String -> SDecoder t -> SDecoder t
+
+
+
+-- remember SDecoder t = JsonValue -> Result String t
+
+
 field name decoder jsonValue =
     case jsonValue of
         Obj dict ->
@@ -211,13 +218,13 @@ field name decoder jsonValue =
 {-| Decodes a nested JSON object, following the given fields.
 -}
 at : List String -> SDecoder t -> SDecoder t
-at path decoder v =
+at path decoder jsonValue =
     case path of
         [] ->
-            decoder v
+            decoder jsonValue
 
         first :: rest ->
-            case v of
+            case jsonValue of
                 Obj d ->
                     case Dict.get first d of
                         Just subvalue ->
@@ -230,6 +237,36 @@ at path decoder v =
                     Err "Encountered a non-object"
 
 
+{-| Decodes a JSON array, with each element decoded by the given decoder.
+-}
+list : SDecoder a -> SDecoder (List a)
+list elementDecoder jsonValue =
+    case jsonValue of
+        Arr jsonValues ->
+            let
+                collapseResultsAcc : List a -> List (Result String a) -> Result String (List a)
+                collapseResultsAcc accumulator results =
+                    case results of
+                        [] ->
+                            Ok (List.reverse accumulator)
+
+                        (Ok value) :: rest ->
+                            collapseResultsAcc (value :: accumulator) rest
+
+                        (Err s) :: rest ->
+                            Err ("An array element did not parse: " ++ s)
+
+                collapseResults : List (Result String a) -> Result String (List a)
+                collapseResults =
+                    collapseResultsAcc []
+            in
+                List.map elementDecoder jsonValues
+                    |> collapseResults
+
+        _ ->
+            Err "Encountered a non-array"
+
+
 {-| Returns a decoder that returns the result of applying the given
 function to the successful result of decoding using the given decoder.
 -}
@@ -237,6 +274,7 @@ map : (s -> t) -> SDecoder s -> SDecoder t
 map f decoder jsonValue =
     decoder jsonValue
         |> Result.map f
+
 
 {-| Returns a decoder that returns the result of applying the given
 function to the successful result of decoding using both of the given
@@ -316,7 +354,3 @@ convertToDecoder sdecoder =
                     Err msg ->
                         Decode.fail msg
             )
-
-
-
--- (todo: Extend to show how to do error messages)

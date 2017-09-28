@@ -27,20 +27,22 @@ readJsonFromString =
 
 {- Let's use this to write some parsers!
 
-   How about:
+      How about:
 
-   type Animal
-     = Dog {name: String}
-     | Cat {name: String, lives: Int}
+      type Animal
+        = Dog {name: String}
+        | Cat {name: String, lives: Int}
 
-   {
-     "cat": {"lives": 3},
-     "name": "Sparky"
-   }
+   Example dog:
+      {
+        "dog": "Fido"
+      }
 
-   {
-     "dog": "Fido"
-   }
+   Example cat:
+      {
+        "cat": {"lives": 3},
+        "name": "Sparky"
+      }
 
 -}
 
@@ -182,6 +184,10 @@ suite =
             , fuzz int "float decoder on int input" <|
                 \i ->
                     Expect.equal (Ok (toFloat i)) (SimpleDecoder.float (Int i))
+            , fuzz (list int) "decodes lists of integers" <|
+                \ints ->
+                    SimpleDecoder.list SimpleDecoder.int (Arr (List.map Int ints))
+                        |> Expect.equal (Ok ints)
             , test "oneOf" <|
                 \_ ->
                     SimpleDecoder.oneOf
