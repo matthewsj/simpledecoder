@@ -26,7 +26,7 @@ type OneStepValue
     | Arr (List Decode.Value)
 
 
-{-| Funciton that converts a JSON value to a OneStepValue.
+{-| Function that converts a JSON value to a OneStepValue.
 -}
 readJsonValue : Decode.Value -> OneStepValue
 readJsonValue v =

@@ -28,7 +28,6 @@ Functions and types for manipulating JsonValue values:
 
 import Dict exposing (Dict)
 import Json.Decode as Decode exposing (Decoder)
-import OneStepDecoder
 
 
 {-| Core JSON type.
@@ -59,31 +58,17 @@ readJsonValue v =
 -}
 toJsonValue : Decoder JsonValue
 toJsonValue =
-    OneStepDecoder.toOneStepValue
-        |> Decode.map
-            (\osv ->
-                case osv of
-                    OneStepDecoder.String s ->
-                        String s
-
-                    OneStepDecoder.Int i ->
-                        Int i
-
-                    OneStepDecoder.Float f ->
-                        Float f
-
-                    OneStepDecoder.Bool b ->
-                        Bool b
-
-                    OneStepDecoder.Null ->
-                        Null
-
-                    OneStepDecoder.Obj dict ->
-                        Obj (Dict.map (\_ v -> readJsonValue v) dict)
-
-                    OneStepDecoder.Arr list ->
-                        Arr (List.map readJsonValue list)
-            )
+    Decode.lazy
+        (\() ->
+            Decode.oneOf
+                [ toJsonString
+                , toJsonNumber
+                , toJsonObject
+                , toJsonArray
+                , toJsonBool
+                , toJsonNull
+                ]
+        )
 
 
 toJsonString : Decoder JsonValue
@@ -94,19 +79,19 @@ toJsonString =
 toJsonNumber : Decoder JsonValue
 toJsonNumber =
     Decode.oneOf
-        [ Decode.map Float Decode.float
-        , Decode.map Int Decode.int
+        [ Decode.map Int Decode.int
+        , Decode.map Float Decode.float
         ]
 
 
 toJsonObject : Decoder JsonValue
 toJsonObject =
-    Decode.map Obj (Decode.lazy (\_ -> Decode.dict toJsonValue))
+    Decode.map Obj (Decode.dict toJsonValue)
 
 
 toJsonArray : Decoder JsonValue
 toJsonArray =
-    Decode.map Arr (Decode.lazy (\_ -> Decode.list toJsonValue))
+    Decode.map Arr (Decode.list toJsonValue)
 
 
 toJsonBool : Decoder JsonValue
@@ -126,18 +111,25 @@ wrapPort p simpleDecoder =
     p (readJsonValue >> simpleDecoder)
 
 
-{-| Simple type alias for functions that parse a JsonValue into a value of
-some arbitrary type t. Since the parse may fail, the function returns a
-Result that could indicate a parse error.
+
+-- Let's use this to write some parsers!
+
+
+{-| Decodes a JSON bool to an elm bool value.
 -}
-type alias SDecoder t =
-    JsonValue
-    -> Result String t
+bool : JsonValue -> Result String Bool
+bool jsonValue =
+    case jsonValue of
+        Bool b ->
+            Ok b
+
+        _ ->
+            Err "Expected a boolean"
 
 
 {-| Decodes a JSON string to an elm string value.
 -}
-string : SDecoder String
+string : JsonValue -> Result String String
 string jsonValue =
     case jsonValue of
         String s ->
@@ -149,7 +141,7 @@ string jsonValue =
 
 {-| Decodes a JSON int to an elm int value.
 -}
-int : SDecoder Int
+int : JsonValue -> Result String Int
 int jsonValue =
     case jsonValue of
         Int i ->
@@ -161,7 +153,7 @@ int jsonValue =
 
 {-| Decodes a JSON number to an elm float value.
 -}
-float : SDecoder Float
+float : JsonValue -> Result String Float
 float jsonValue =
     case jsonValue of
         Int i ->
@@ -174,21 +166,9 @@ float jsonValue =
             Err "Expected a number"
 
 
-{-| Decodes a JSON bool to an elm bool value.
--}
-bool : SDecoder Bool
-bool jsonValue =
-    case jsonValue of
-        Bool b ->
-            Ok b
-
-        _ ->
-            Err "Expected a boolean"
-
-
 {-| Decodes JSON null to a supplied elm value.
 -}
-null : t -> SDecoder t
+null : t -> JsonValue -> Result String t
 null val jsonValue =
     case jsonValue of
         Null ->
@@ -196,6 +176,14 @@ null val jsonValue =
 
         _ ->
             Err "Expected null"
+
+
+{-| Simple type alias for functions that parse a JsonValue into a value of
+some arbitrary type t. Since the parse may fail, the function returns a
+Result that could indicate a parse error.
+-}
+type alias SDecoder t =
+    JsonValue -> Result String t
 
 
 {-| Returns the value at the field with the given name.
@@ -237,16 +225,6 @@ at path decoder v =
                     Err "Encountered a non-object"
 
 
-orElse : (() -> Result x y) -> Result x y -> Result x y
-orElse thunk result =
-    case result of
-        Ok _ ->
-            result
-
-        Err _ ->
-            thunk ()
-
-
 {-| Returns a decoder that returns the result of applying the given
 function to the successful result of decoding using the given decoder.
 -}
@@ -261,12 +239,22 @@ parsing its input, and that fails only if every decoder fails.
 -}
 oneOf : List (SDecoder t) -> SDecoder t
 oneOf decoders jsonValue =
-    case decoders of
-        [] ->
-            Err "No decoder matched value"
+    let
+        orElse : (() -> Result x y) -> Result x y -> Result x y
+        orElse thunk result =
+            case result of
+                Ok _ ->
+                    result
 
-        decoder :: rest ->
-            decoder jsonValue |> orElse (\_ -> oneOf rest jsonValue)
+                Err _ ->
+                    thunk ()
+    in
+        case decoders of
+            [] ->
+                Err "No decoder matched value"
+
+            decoder :: rest ->
+                decoder jsonValue |> orElse (\_ -> oneOf rest jsonValue)
 
 
 {-| Returns a decoder that runs the given decoder against its input. Then,
@@ -283,3 +271,27 @@ andThen toB aDecoder jsonValue =
 
         Err s ->
             Err s
+
+
+
+-- Interoperability with "real" decoders
+
+
+{-| Converts a simple decoder to a "real" decoder
+-}
+convertToDecoder : SDecoder a -> Decoder a
+convertToDecoder sdecoder =
+    toJsonValue
+        |> Decode.andThen
+            (\jsonValue ->
+                case sdecoder jsonValue of
+                    Ok result ->
+                        Decode.succeed result
+
+                    Err msg ->
+                        Decode.fail msg
+            )
+
+
+
+-- (todo: Extend to show how to do error messages)
