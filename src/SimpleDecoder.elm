@@ -1,8 +1,8 @@
-module SimpleDecoder exposing (JsonValue, toJsonValue, wrapPort)
+module SimpleDecoder exposing (JsonValue(..), readJsonValue, toJsonValue, wrapPort, at)
 
 {-| Library for writing simple JSON decoders.
 
-@docs JsonValue, toJsonValue, wrapPort
+@docs JsonValue, readJsonValue, toJsonValue, wrapPort, at
 
 -}
 
@@ -66,7 +66,6 @@ toJsonValue =
             )
 
 
-
 toJsonString : Decoder JsonValue
 toJsonString =
     Decode.map String Decode.string
@@ -105,3 +104,81 @@ toJsonNull =
 wrapPort : ((Decode.Value -> msg) -> Sub msg) -> (JsonValue -> msg) -> Sub msg
 wrapPort p simpleDecoder =
     p (readJsonValue >> simpleDecoder)
+
+
+field : String -> JsonValue -> Result String JsonValue
+field name jsonValue =
+    case jsonValue of
+        Obj dict ->
+            case Dict.get name dict of
+                Just fieldValue ->
+                    Ok fieldValue
+
+                Nothing ->
+                    Err ("Field name " ++ name ++ " not found")
+
+        _ ->
+            Err "Value was not an object"
+
+
+{-| Decodes a nested JSON object, following the given fields.
+-}
+at : List String -> JsonValue -> Result String JsonValue
+at path v =
+    case path of
+        [] ->
+            Ok v
+
+        first :: rest ->
+            case v of
+                Obj d ->
+                    case Dict.get first d of
+                        Just subvalue ->
+                            at rest subvalue
+
+                        Nothing ->
+                            Err ("Subpath " ++ first ++ " not found")
+
+                _ ->
+                    Err "Encountered a non-object"
+
+
+type alias SDecoder t =
+    JsonValue
+    -> Result String t
+
+
+orElse : (() -> Result x y) -> Result x y -> Result x y
+orElse thunk result =
+    case result of
+        Ok _ ->
+            result
+
+        Err _ ->
+            thunk ()
+
+
+map : (s -> t) -> SDecoder s -> SDecoder t
+map f decoder jsonValue =
+    decoder jsonValue
+        |> Result.map f
+
+
+oneOf : List (SDecoder t) -> SDecoder t
+oneOf decoders jsonValue =
+    case decoders of
+        [] ->
+            Err "No decoder matched value"
+
+        decoder :: rest ->
+            decoder jsonValue |> orElse (\_ -> oneOf rest jsonValue)
+
+
+andThen : (a -> SDecoder b) -> SDecoder a -> SDecoder b
+andThen toB aDecoder jsonValue =
+    case aDecoder jsonValue of
+        Ok a ->
+            (toB a) jsonValue
+
+        Err s ->
+            Err s
