@@ -27,7 +27,7 @@ type OneStepValue
 
 
 {-| Funciton that converts a JSON value to a OneStepValue.
- -}
+-}
 readJsonValue : Decode.Value -> OneStepValue
 readJsonValue v =
     case Decode.decodeValue toOneStepValue v of
@@ -60,8 +60,8 @@ toOneStepString =
 toOneStepNumber : Decoder OneStepValue
 toOneStepNumber =
     Decode.oneOf
-        [ Decode.map Float Decode.float
-        , Decode.map Int Decode.int
+        [ Decode.map Int Decode.int
+        , Decode.map Float Decode.float
         ]
 
 
@@ -84,9 +84,9 @@ toOneStepNull : Decoder OneStepValue
 toOneStepNull =
     Decode.null Null
 
+
 {-| Converts a Json.Decode.Value port into a OneStepValue port.
 -}
 wrapPort : ((Decode.Value -> msg) -> Sub msg) -> (OneStepValue -> msg) -> Sub msg
 wrapPort p oneStepDecoder =
     p (readJsonValue >> oneStepDecoder)
-
