@@ -6,7 +6,7 @@ import Fuzz exposing (Fuzzer, float, int, list, string)
 import Test exposing (..)
 import Json.Encode as Encode
 import JsonUtil exposing (jsonFromString)
-import SimpleDecoder exposing (JsonValue(..), readJsonValue)
+import SimpleDecoder exposing (JsonValue(..), SDecoder, readJsonValue)
 
 
 constructValueAtPath : JsonValue -> List String -> JsonValue
@@ -22,6 +22,89 @@ constructValueAtPath value path =
 readJsonFromString : String -> JsonValue
 readJsonFromString =
     jsonFromString >> readJsonValue
+
+
+
+{- Let's use this to write some parsers!
+
+   How about:
+
+   type Animal
+     = Dog {name: String}
+     | Cat {name: String, lives: Int}
+
+   {
+     "cat": {"lives": 3},
+     "name": "Sparky"
+   }
+
+   {
+     "dog": "Fido"
+   }
+
+-}
+
+
+type Animal
+    = Dog { name : String }
+    | Cat { name : String, lives : Int }
+
+
+decodeAnimalAttempt1 : JsonValue -> Result String Animal
+decodeAnimalAttempt1 jsonValue =
+    case jsonValue of
+        Obj fields ->
+            case Dict.get "dog" fields of
+                Just dogValue ->
+                    case dogValue of
+                        String s ->
+                            Ok (Dog { name = s })
+
+                        _ ->
+                            Err "dog didn't have a name!"
+
+                Nothing ->
+                    case Dict.get "cat" fields of
+                        Just catValue ->
+                            case ( catValue, Dict.get "name" fields ) of
+                                ( Obj catFields, Just (String name) ) ->
+                                    case Dict.get "lives" catFields of
+                                        Just (Int lives) ->
+                                            Ok (Cat { name = name, lives = lives })
+
+                                        _ ->
+                                            Err "Bad case"
+
+                                _ ->
+                                    Err "Also bad"
+
+                        _ ->
+                            Err "I give up"
+
+        _ ->
+            Err "Please stop"
+
+
+decodeAnimal : SDecoder Animal
+decodeAnimal =
+    SimpleDecoder.oneOf
+        [ SimpleDecoder.map
+            (\name -> Dog { name = name })
+            (SimpleDecoder.field "dog" SimpleDecoder.string)
+        , SimpleDecoder.map2
+            (\name lives -> Cat { name = name, lives = lives })
+            (SimpleDecoder.field "name" SimpleDecoder.string)
+            (SimpleDecoder.at [ "cat", "lives" ] SimpleDecoder.int)
+        ]
+
+
+expectAnimalParse : String -> Animal -> Expectation
+expectAnimalParse jsonString animal =
+    readJsonFromString jsonString
+        |> Expect.all
+            [ \val -> Expect.equal (Ok animal) (decodeAnimalAttempt1 val)
+            , \val -> Expect.equal (Ok animal) (decodeAnimal val)
+            ]
 
 
 suite : Test
@@ -120,4 +203,8 @@ suite =
                         decoder (readJsonFromString "{\"interestingVar\":\"b\",\"a\":10,\"b\":12}")
                             |> Expect.equal (Ok 12)
             ]
+        , test "Dog parsing" <|
+            \_ -> expectAnimalParse "{\"dog\":\"Fido\"}" (Dog { name = "Fido" })
+        , test "Cat parsing" <|
+            \_ -> expectAnimalParse "{\"cat\":{\"lives\":3},\"name\":\"Sparky\"}" (Cat { name = "Sparky", lives = 3 })
         ]

@@ -13,6 +13,7 @@ module SimpleDecoder
         , field
         , at
         , map
+        , map2
         , oneOf
         , andThen
         )
@@ -22,7 +23,7 @@ module SimpleDecoder
 @docs JsonValue, readJsonValue, toJsonValue, wrapPort
 
 Functions and types for manipulating JsonValue values:
-@docs SDecoder, string, int, float, bool, null, field, at, map, oneOf, andThen
+@docs SDecoder, string, int, float, bool, null, field, at, map, map2, oneOf, andThen
 
 -}
 
@@ -111,10 +112,6 @@ wrapPort p simpleDecoder =
     p (readJsonValue >> simpleDecoder)
 
 
-
--- Let's use this to write some parsers!
-
-
 {-| Decodes a JSON bool to an elm bool value.
 -}
 bool : JsonValue -> Result String Bool
@@ -178,12 +175,20 @@ null val jsonValue =
             Err "Expected null"
 
 
+
+-- These all have the same type! Let's abstract that out.
+
+
 {-| Simple type alias for functions that parse a JsonValue into a value of
 some arbitrary type t. Since the parse may fail, the function returns a
 Result that could indicate a parse error.
 -}
 type alias SDecoder t =
     JsonValue -> Result String t
+
+
+
+-- Now let's write some higher-order parsers that help us work with non-primitive values.
 
 
 {-| Returns the value at the field with the given name.
@@ -232,6 +237,26 @@ map : (s -> t) -> SDecoder s -> SDecoder t
 map f decoder jsonValue =
     decoder jsonValue
         |> Result.map f
+
+{-| Returns a decoder that returns the result of applying the given
+function to the successful result of decoding using both of the given
+decoders.
+-}
+map2 : (a -> b -> t) -> SDecoder a -> SDecoder b -> SDecoder t
+map2 f aDecoder bDecoder jsonValue =
+    let
+        aResult =
+            aDecoder jsonValue
+
+        bResult =
+            bDecoder jsonValue
+    in
+        case ( aResult, bResult ) of
+            ( Ok a, Ok b ) ->
+                Ok (f a b)
+
+            _ ->
+                Err "Map decoders did not pass"
 
 
 {-| Returns a decoder that tries each of the given decoders in turn when
