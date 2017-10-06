@@ -1,14 +1,26 @@
 # You could have designed the `Json.Decode` library!
 
-A lot of people who are learning elm for the first time find the elm's `Json.Decode` library to be a big stumbling block. It's the only way to write JSON values from elm, so you're probably going to have to use it if you want your elm program to talk to the outside world. 
+A lot of people who are learning elm for the first time find the elm's
+`Json.Decode` library to be a big stumbling block. It's the only way to write
+JSON values from elm, so you're probably going to have to use it if you want
+your elm program to talk to the outside world.
 
 But why does it have to be so, well, _weird_?
 
-You've got the hang of how to define records and tagged unions already, and you had to learn how to use `case` and pattern matching to read complicated data structures already -- what's up with `Json.Decode` making you build up decoders using a special set of functions like `field` and `oneOf`? Why can't we just have a normal elm datatype that represents a JSON value and write normal elm functions to process it?
+You've got the hang of how to define records and tagged unions already, and you
+had to learn how to use `case` and pattern matching to read complicated data
+structures already -- what's up with `Json.Decode` making you build up decoders
+using a special set of functions like `field` and `oneOf`? Why can't we just
+have a normal elm datatype that represents a JSON value and write normal elm
+functions to process it?
 
 Let's find out.
 
-In this article, I'm going to try to lead you to designing elm's `Json.Decode` library. I'll assume you're comfortable writing elm and you know what JSON is in general, but that you don't know anything about how decoding works. By the end, I hope you'll understand how `Json.Decode` works and have an intuition for why it's designed the way it is.
+In this article, I'm going to try to lead you to designing elm's `Json.Decode`
+library. I'll assume you're comfortable writing elm and you know what JSON is in
+general, but that you don't know anything about how decoding works. By the end,
+I hope you'll understand how `Json.Decode` works and have an intuition for why
+it's designed the way it is.
 
 ## JSON the normal way
 
@@ -24,9 +36,15 @@ type JsonValue
     | Arr (List JsonValue)
 ```
 
-A JSON value is a string, a number (`Int` or `Float`), a boolean, the value `null`, an object consisting of strings associated with other JSON values, or an array of JSON values. This is how you might expect JSON to be exposed in elm, and in any event it's totally bog-standard elm code with nothing fancy going on. Easy peasy.
+A JSON value is a string, a number (`Int` or `Float`), a boolean, the value
+`null`, an object consisting of strings associated with other JSON values, or an
+array of JSON values. This is how you might expect JSON to be exposed in elm,
+and in any event it's totally bog-standard elm code with nothing fancy going on.
+Easy peasy.
 
-Let's say we're writing a game client, and the server sends us groups of updates periodically in the form of a JSON message that looks like this:
+Let's say we're writing a game client, and the server sends us groups of updates
+periodically in the form of a JSON message that looks like this:
+
 ```json
 {
   "operations": [
@@ -41,22 +59,35 @@ Let's say we're writing a game client, and the server sends us groups of updates
   ]
 }
 ```
-We need to use these in elm somehow. We could use the `JsonValue` representation directly, but that seems like a bad idea since it'd mean we'd have to deal with the details of the JSON format all through our program. Instead we should define a more reasonable elm type like this:
+We need to use these in elm somehow. We could use the `JsonValue` representation
+directly, but that seems like a bad idea since it'd mean we'd have to deal with
+the details of the JSON format all through our program. Instead we should define
+a more reasonable elm type like this:
 ```elm
 type Operation
     = CreateEnemy { name : String, hitPoints : Int }
     | MovePlayer { location : String }
 ```
-and write a function that translates a `JsonValue` and produces a list of into a list of `Operation`s:
+and write a function that translates a `JsonValue` and produces a list of into a
+list of `Operation`s:
 ```elm
 readOperations : JsonValue -> List Operation
 ```
-Oh, and we also need to account for what happens if we get a JSON value that isn't a legal operation. We could return a `Maybe (List Operation)`, but for debugging we're probably going to want to know why the JSON we got wasn't an operation, so let's make it a `Result String (List Operation)` instead. So we want to write:
+
+Oh, and we also need to account for what happens if we get a JSON value that
+isn't a legal operation. We could return a `Maybe (List Operation)`, but for
+debugging we're probably going to want to know why the JSON we got wasn't an
+operation, so let's make it a `Result String (List Operation)` instead. So we
+want to write:
+
 ```elm
 readOperations : JsonValue -> Result String (List Operation)
 ```
 
-Since we're talking about `JsonValue`s, this is just a normal elm function, we can write it out using just `case`s and normal elm things. Below is a first stab. (I'm going to show the whole program, but it's big and I'll talk about the important parts directly, so don't feel like you need to study it.)
+Since we're talking about `JsonValue`s, this is just a normal elm function, we
+can write it out using just `case`s and normal elm things. Below is a first
+stab. (I'm going to show the whole program, but it's big and I'll talk about the
+important parts directly, so don't feel like you need to study it.)
 ```elm
 readOperations : JsonValue -> Result String (List Operation)
 readOperations jsonValue =
@@ -159,17 +190,35 @@ readMovePlayer fields =
         Nothing ->
             Err "Expected an object with field \"location\""
 ```
-Holy cow, this function is _huge!_ Somehow I needed nearly 100 lines of code just to read a pretty simple bit of JSON. And if the format were more complicated, this code would keep getting bigger.
 
-If you look it over, you can see why. As we're reading JSON a lot of things can go wrong, and elm's type system (rightly) forces us to handle every possible error. That leads to a lot of boilerplate. For instance, in `readCreateEnemy`, the first case of the first case handles the good path, and the entire rest of the function -- four more cases -- mechanically address all the ways reading could go wrong.
+Holy cow, this function is _huge!_ Somehow I needed nearly 100 lines of code
+just to read a pretty simple bit of JSON. And if the format were more
+complicated, this code would keep getting bigger.
 
-This not only makes the code tedious to write, it also makes it tedious to _read_. All that error handling code makes it very hard to look at this code and figure out what format it's trying to parse, which will become a problem if we ever need to change it.
+If you look it over, you can see why. As we're reading JSON a lot of things can
+go wrong, and elm's type system (rightly) forces us to handle every possible
+error. That leads to a lot of boilerplate. For instance, in `readCreateEnemy`,
+the first case of the first case handles the good path, and the entire rest of
+the function -- four more cases -- mechanically address all the ways reading
+could go wrong.
 
-We're not going to be able to get rid of that error handling code -- and we shouldn't want to. After all, we do legitimately need to deal with the fact that our input JSON might not have the shape we expect. But there's so much of it that it obscures our intent. So let's see if we can find a way to separate out the error handling code into its own library.
+This not only makes the code tedious to write, it also makes it tedious to
+_read_. All that error handling code makes it very hard to look at this code and
+figure out what format it's trying to parse, which will become a problem if we
+ever need to change it.
+
+We're not going to be able to get rid of that error handling code -- and we
+shouldn't want to. After all, we do legitimately need to deal with the fact that
+our input JSON might not have the shape we expect. But there's so much of it
+that it obscures our intent. So let's see if we can find a way to separate out
+the error handling code into its own library.
 
 ## Pulling out all that error handling code
 
-Notice how every function starts with a `case` statement that checks that the JSON object is the appropriate tag, and returns an error message otherwise? Let's write some helper functions that just do that. Let's start with the primitive values that have straightforward elm equivalents:
+Notice how every function starts with a `case` statement that checks that the
+JSON object is the appropriate tag, and returns an error message otherwise?
+Let's write some helper functions that just do that. Let's start with the
+primitive values that have straightforward elm equivalents:
 ```elm
 {-| Reads a JSON string to a String. Returns an error if the input isn't a string.
 -}
@@ -197,7 +246,12 @@ int jsonValue =
 -- ... and similar for float and bool
 
 ```
-Before we move on, one observation: We're writing the type `JsonValue -> Result String [something]` a lot to represent things that read a JSON value to some elm type. When I see a common pattern in types like this, I like to give it a name to help me think about it:
+
+Before we move on, one observation: We're writing the type `JsonValue -> Result
+String [something]` a lot to represent things that read a JSON value to some elm
+type. When I see a common pattern in types like this, I like to give it a name
+to help me think about it:
+
 ```elm
 {-| Simple type alias for functions that parse a JsonValue into a value of
 some arbitrary type t. Since the parse may fail, the function returns a
@@ -205,13 +259,25 @@ Result that could indicate a parse error.
 -}
 type alias SimpleDecoder t = JsonValue -> Result String t
 ```
-From now on I'll use this type. But when you see it, remember that it's just a function that reads a `JsonValue` and produces a result. We're still in the world of plain old elm functions and data structures.
+From now on I'll use this type. But when you see it, remember that it's just a
+function that reads a `JsonValue` and produces a result. We're still in the
+world of plain old elm functions and data structures.
 
 ## Arrays
 
-Now we've gotten rid of all that error handling boilerplate for all the flat JSON values, but we couldn't handle many interesting JSON values without also dealing with arrays and objects. Up to this point, the functions we've been writing only needed to do one thing: look at one level of JSON structure and either return the equivalent elm value or an error. But arrays and objects are containers for more JSON values that the caller probably has an opinion about: we don't just want a list, we want a list of strings in one place and maybe a list of integers in another. 
+Now we've gotten rid of all that error handling boilerplate for all the flat
+JSON values, but we couldn't handle many interesting JSON values without also
+dealing with arrays and objects. Up to this point, the functions we've been
+writing only needed to do one thing: look at one level of JSON structure and
+either return the equivalent elm value or an error. But arrays and objects are
+containers for more JSON values that the caller probably has an opinion about:
+we don't just want a list, we want a list of strings in one place and maybe a
+list of integers in another.
 
-Fortunately, elm makes it easy to snap functions together to build bigger functions, so let's make our array decoder take another decoder that it will use to decode each element. We can just use the implementation of `readOperationsList` we wrote earlier and modify it to take a decoder argument:
+Fortunately, elm makes it easy to snap functions together to build bigger
+functions, so let's make our array decoder take another decoder that it will use
+to decode each element. We can just use the implementation of
+`readOperationsList` we wrote earlier and modify it to take a decoder argument:
 ```elm
 {-| Decodes a JSON array, with each element decoded by the given decoder.
 -}
@@ -236,8 +302,8 @@ That's it!
 
 Objects pose some problems of their own. 
 
-* For one thing, JSON objects have fields, and when we process an object we almost always want to get a specific named field and process that.
-
+* For one thing, JSON objects have fields, and when we process an object we
+  almost always want to get a specific named field and process that.
 * For another, when we read an object like
  ```json
 {
@@ -246,14 +312,24 @@ Objects pose some problems of their own.
   "hitPoints": 4
 }
  ```
-we need to read multiple fields off of it and provide them to some other function to get a result -- in this case we need to read the `name` and `hitPoints` fields and provide them to `CreateEnemy`.
-* Finally, we may need to figure out what to expect from an object by reading other pieces of it. For our operations, we need to read the `"action"` field to know whether we're making a `CreateEnemy` or a `MovePlayer` action and what other fields to expect to see on the object.
+ we need to read multiple fields off of it and provide them to some other
+function to get a result -- in this case we need to read the `name` and
+`hitPoints` fields and provide them to `CreateEnemy`.
+* Finally, we may need to figure out what to expect from an object by reading
+  other pieces of it. For our operations, we need to read the `"action"` field
+  to know whether we're making a `CreateEnemy` or a `MovePlayer` action and what
+  other fields to expect to see on the object.
 
 Let's tackle these one at a time.
 
 ### Reading fields
 
-Now that we've dealt with arrays, this seems pretty straightforward. We can do what we did there: write a function that takes a `SimpleDecoder` and a field name as arguments, and returns a new `SimpleDecoder` that expects to see an object that contains the given field and reads it with the given decoder. Here's how that looks:
+Now that we've dealt with arrays, this seems pretty straightforward. We can do
+what we did there: write a function that takes a `SimpleDecoder` and a field
+name as arguments, and returns a new `SimpleDecoder` that expects to see an
+object that contains the given field and reads it with the given decoder. Here's
+how that looks:
+
 ```elm
 {-| Decodes the named field of the given JSON object using the given decoder.
 Returns an error if the given value isn't a JSON object.
@@ -275,11 +351,24 @@ field name decoder jsonValue =
 
 ### Combining multiple fields
 
-In our first version of `decodeOperations`, the function `readCreateEnemy` is responsible for reading the `name` and `hitPoints` fields of a JSON object and using the contents to build a `CreateEnemy` operation. It is easily the nastiest function in that implementation due to how much error handling we need to do, so if we're trying to clean up the error-handling code we're going to have to do something here. But it's not immediately apparent _what_.
+In our first version of `decodeOperations`, the function `readCreateEnemy` is
+responsible for reading the `name` and `hitPoints` fields of a JSON object and
+using the contents to build a `CreateEnemy` operation. It is easily the nastiest
+function in that implementation due to how much error handling we need to do, so
+if we're trying to clean up the error-handling code we're going to have to do
+something here. But it's not immediately apparent _what_.
 
-Let's think about what we're going to need to do. First of all, `readCreateEnemy`'s job is to build a `CreateEnemy`, a value that has nothing to do with JSON; it seems like a good idea to let the caller provide a function that does the combining while the boilerplate we're writing now handles calling it under the right circumstances. Since our job is to handle the errors, that function should just take the successful results of decoding the subfields, so we're also going to need the caller to tell us what subfields they want and how to decode their contents.
+Let's think about what we're going to need to do. First of all,
+`readCreateEnemy`'s job is to build a `CreateEnemy`, a value that has nothing to
+do with JSON; it seems like a good idea to let the caller provide a function
+that does the combining while the boilerplate we're writing now handles calling
+it under the right circumstances. Since our job is to handle the errors, that
+function should just take the successful results of decoding the subfields, so
+we're also going to need the caller to tell us what subfields they want and how
+to decode their contents.
 
-Let's write that out (pretending for the sake of argument we always want to read and combine exactly two fields):
+Let's write that out (pretending for the sake of argument we always want to read
+and combine exactly two fields):
 ```elm
 potentialMultifieldDecoder :
     (a -> b -> t)
@@ -289,7 +378,14 @@ potentialMultifieldDecoder :
     -> SimpleDecoder b
     -> SimpleDecoder t
 ```
-This seems like a function we could implement, but it's frustrating that we _just_ wrote a function that decodes a field, and we're going to have to write it again in the body of this new function. This is one of these nice situations where we can do less work and make our library more powerful at the same time -- instead of forcing the caller to read fields from an object, let's allow them to decode anything they want! They can easily decode multiple fields from an object using the `field` function we just wrote, or they can decode and combine anything else they want.
+This seems like a function we could implement, but it's frustrating that we
+_just_ wrote a function that decodes a field, and we're going to have to write
+it again in the body of this new function. This is one of these nice situations
+where we can do less work and make our library more powerful at the same time --
+instead of forcing the caller to read fields from an object, let's allow them to
+decode anything they want! They can easily decode multiple fields from an object
+using the `field` function we just wrote, or they can decode and combine
+anything else they want.
 
 That function becomes:
 ```elm
@@ -312,15 +408,33 @@ object2 f aDecoder bDecoder jsonValue =
 ```
 We can also define `object3`, `object4`, and so on.
 
-Looking at what we've written, does the type look familiar to you? If you read a lot of elm library code, you might have noticed that it fits the `map` pattern that shows up in a lot of libraries: for instance, 
+Looking at what we've written, does the type look familiar to you? If you read a
+lot of elm library code, you might have noticed that it fits the `map` pattern
+that shows up in a lot of libraries: for instance,
 ```elm
 Maybe.map2 : (a -> b -> t) -> Maybe a -> Maybe b -> Maybe t
 Result.map2 : (a -> b -> t) -> Result x a -> Result x b -> Result x t
 Task.map2 : (a -> b -> t) -> Task x a -> Task x b -> Task x t
 ```
-In all those libraries, a "map" function does the same kind of thing. We have some type like `Maybe` that we can think of as a "sort-of `a`" type -- `Maybe a` is an `a` that might not be there, `Result x a` is an `a` that might be an error value of type `x` instead, and `Task x a` is a recipe for an asynchronous task that might produce an `a` if we execute it. That makes `map2` a "sort-of function application" given that we have a sort-of `a` and a sort-of `b` already, apply the function to the underlying `a` and `b` values if and once they exist. Since they're only sort of values, the result is also only sort of a value.
 
-In our case, `SimpleDecoder a` represents a "sort-of `a`" -- an `a` that we might get by reading it out of a JSON value. It fits the pattern nicely! In that context, it's clear that `object2` is really just `map2`, and we should call it that for consistency with other elm libraries. Also, it makes it obvious that there's a good reason for us to add a `map` (i.e., `map1`) that transforms just a single argument. We can use this for more than just reading fields off of an object!
+In all those libraries, a "map" function does the same kind of thing. We have
+some type like `Maybe` that we can think of as a "sort-of `a`" type -- `Maybe a`
+is an `a` that might not be there, `Result x a` is an `a` that might be an error
+value of type `x` instead, and `Task x a` is a recipe for an asynchronous task
+that might produce an `a` if we execute it. That makes `map2` a "sort-of
+function application" given that we have a sort-of `a` and a sort-of `b`
+already, apply the function to the underlying `a` and `b` values if and once
+they exist. Since they're only sort of values, the result is also only sort of a
+value.
+
+In our case, `SimpleDecoder a` represents a "sort-of `a`" -- an `a` that we
+might get by reading it out of a JSON value. It fits the pattern nicely! In that
+context, it's clear that `object2` is really just `map2`, and we should call it
+that for consistency with other elm libraries. Also, it makes it obvious that
+there's a good reason for us to add a `map` (i.e., `map1`) that transforms just
+a single argument. We can use this for more than just reading fields off of an
+object!
+
 ```elm
 map2 : (a -> b -> t) -> SimpleDecoder a -> SimpleDecoder b -> SimpleDecoder t
 map2 = object2
@@ -337,18 +451,39 @@ map f decoder jsonValue =
 
 ### Making decisions while decoding
 
-At this point we've built up a library that factors out error handling nicely for _almost_ everything we did in our original program. The one problem we have left is our original `readOperation` function, which looks at the `action` field and decides whether to call `readCreateEnemy` or `readMovePlayer`. If we think of `readOperation` as being composed of the "real function" and the "error boilerplate," then the real function is the part that reads the `action` field as a string and then performs case dispatch on it to call either `readCreateEnemy` or `readMovePlayer`, and the error boilerplate is the series of four cases at the end of the function that handle the scenarios:
+At this point we've built up a library that factors out error handling nicely
+for _almost_ everything we did in our original program. The one problem we have
+left is our original `readOperation` function, which looks at the `action` field
+and decides whether to call `readCreateEnemy` or `readMovePlayer`. If we think
+of `readOperation` as being composed of the "real function" and the "error
+boilerplate," then the real function is the part that reads the `action` field
+as a string and then performs case dispatch on it to call either
+`readCreateEnemy` or `readMovePlayer`, and the error boilerplate is the series
+of four cases at the end of the function that handle the scenarios:
 
 1. When the JSON object we're reading specifies an `action` field that isn't `"createEnemy"` or `"movePlayer"`,
 1. When it specifies an `action` field that isn't a string,
 1. When it doesn't have an `action` field, and
 1. When it isn't an object at all.
 
-The first one is pretty specific to reading `Operation`s, but the others are completely generic: in fact, `field "action" string` already handles all three. So let's figure out a way to reuse that. We need the user to specify the "real function" from above, so let's just take it directly as a (real) function. This function should take a successfully-decoded string, but what should it return? In the code we're trying to remove boilerplate from it returned `readCreateEnemy` and `readMovePlayer`, both of which can be thought of as `SimpleDecoder`s. So our boilerplate could take a `SimpleDecoder a` and a function `a -> SimpleDecoder b` and should return a `SimpleDecoder b`. Here's that type all at once:
+The first one is pretty specific to reading `Operation`s, but the others are
+completely generic: in fact, `field "action" string` already handles all three.
+So let's figure out a way to reuse that. We need the user to specify the "real
+function" from above, so let's just take it directly as a (real) function. This
+function should take a successfully-decoded string, but what should it return?
+In the code we're trying to remove boilerplate from it returned
+`readCreateEnemy` and `readMovePlayer`, both of which can be thought of as
+`SimpleDecoder`s. So our boilerplate could take a `SimpleDecoder a` and a
+function `a -> SimpleDecoder b` and should return a `SimpleDecoder b`. Here's
+that type all at once:
+
 ```elm
 (a -> SimpleDecoder b) -> SimpleDecoder a -> SimpleDecoder b
 ```
-That type looks familiar too! It shows up in lots of elm packages under the name `andThen`: for instance, just in `core`, we've got
+
+That type looks familiar too! It shows up in lots of elm packages under the name
+`andThen`: for instance, just in `core`, we've got
+
 ```elm
 Maybe.andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 Result.andThen : (a -> Result x b) -> Result x a -> Result x b
@@ -356,7 +491,12 @@ Task.andThen : (a -> Task x b) -> Task x a -> Task x b
 ```
 and on and on.
 
-In all those cases, `andThen` does basically the same thing we want it to do here. Remember `map` represents applying a function `a -> b` to a "sort-of `a`"; we might not not get our `a`, but if we do we can definitely convert it to a `b`. `andThen` is for the situation where we have a sort-of `a`, and once we actually get our hands on an `a` we want to use it to figure out how to make a sort-of `b`. For instance, you can use
+In all those cases, `andThen` does basically the same thing we want it to do
+here. Remember `map` represents applying a function `a -> b` to a "sort-of `a`";
+we might not not get our `a`, but if we do we can definitely convert it to a
+`b`. `andThen` is for the situation where we have a sort-of `a`, and once we
+actually get our hands on an `a` we want to use it to figure out how to make a
+sort-of `b`. For instance, you can use
 ```elm
 Maybe.map (\x -> x + 1) maybeNumber
 ```
@@ -366,7 +506,9 @@ Maybe.andThen (\x -> if x >= 5 then (Just x) else Nothing) maybeNumber
 ```
 to turn `maybeNumber` into `Nothing` if it's less than 5.
 
-This pattern is exactly what we want to do with decoders, so let's call our function `andThen`. It's easy enough to implement:
+This pattern is exactly what we want to do with decoders, so let's call our
+function `andThen`. It's easy enough to implement:
+
 ```elm
 {-| Returns a decoder that runs the given decoder against its input. Then,
 if the decode is successful, it applies the given function and re-parses
@@ -384,7 +526,14 @@ andThen toB aDecoder jsonValue =
             Err s
 ```
 
-One last detail: Our boilerplate handles the generic problems, but using `andThen` we might find ourselves writing logic that wants to directly return a success with a particular value or a failure without running any more child decoders. We can't just return `Ok` or `Error` values in those cases because `andThen` wants us to return a `SimpleDecoder` -- which, remember, is a function that takes a `JsonValue` to a `Result`, not a `Result` itself. But we can do the next best thing:
+One last detail: Our boilerplate handles the generic problems, but using
+`andThen` we might find ourselves writing logic that wants to directly return a
+success with a particular value or a failure without running any more child
+decoders. We can't just return `Ok` or `Error` values in those cases because
+`andThen` wants us to return a `SimpleDecoder` -- which, remember, is a function
+that takes a `JsonValue` to a `Result`, not a `Result` itself. But we can do the
+next best thing:
+
 ```elm
 {-| Returns a decoder that always succeeds with the given value.
 -}
@@ -402,7 +551,10 @@ fail str jsonValue =
 
 ## Parsing operations, take two
 
-Now we've written everything we need to pull out all the boilerplate from `readOperation`. Let's see what it looks like when we take all that boilerplate out:
+Now we've written everything we need to pull out all the boilerplate from
+`readOperation`. Let's see what it looks like when we take all that boilerplate
+out:
+
 ```elm
 readOperations : SimpleDecoder (List Operation)
 readOperations =
@@ -431,10 +583,25 @@ readOperations =
                             SimpleDecoder.fail ("Got invalid action: " ++ action)
                 )
 ```
-Wow! This version is only about a quarter of the size of our first attempt, and it's much more readable. If you squint a bit, it reads almost like a straightforward description of the JSON format: It's a list of objects with field called `action`. If `action` is `"createEnemy"` then it should have `name` and `hitPoints` fields, if it's `"movePlayer"` then it should have a `location` field, and anything else is illegal. I would much prefer to maintain this version of the parse than what we started with.
+
+Wow! This version is only about a quarter of the size of our first attempt, and
+it's much more readable. If you squint a bit, it reads almost like a
+straightforward description of the JSON format: It's a list of objects with
+field called `action`. If `action` is `"createEnemy"` then it should have `name`
+and `hitPoints` fields, if it's `"movePlayer"` then it should have a `location`
+field, and anything else is illegal. I would much prefer to maintain this
+version of the parse than what we started with.
 
 ## Congratulations! You designed `Json.Decode`!
 
-The bad news is, the `Json.Decode` library doesn't have a `JsonValue` type like the one we've been using here. It's implemented in native Javascript and doesn't give you access to the underlying data structures it uses.
+The bad news is, the `Json.Decode` library doesn't have a `JsonValue` type like
+the one we've been using here. It's implemented in native Javascript and doesn't
+give you access to the underlying data structures it uses.
 
-The good news is, every other function we've written here was actually taken straight from the `Json.Decode` API: replace `SimpleDecoder` with `Decoder` and everything works just the same! And as I hope I've convinced you, even `Json.Decode` _did_ give you a `JsonValue` equivalent, you'd want to use the API functions anyway. I hope that now that you've figured out from first principles why the library works the way it does, you'll find it a little less mysterious and easier to work with.
+The good news is, every other function we've written here was actually taken
+straight from the `Json.Decode` API: replace `SimpleDecoder` with `Decoder` and
+everything works just the same! And as I hope I've convinced you, even
+`Json.Decode` _did_ give you a `JsonValue` equivalent, you'd want to use the API
+functions anyway. I hope that now that you've figured out from first principles
+why the library works the way it does, you'll find it a little less mysterious
+and easier to work with.
