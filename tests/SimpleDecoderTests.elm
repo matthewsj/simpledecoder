@@ -1,12 +1,12 @@
 module SimpleDecoderTests exposing (..)
 
-import Dict
+import Dict exposing (Dict)
 import Expect exposing (Expectation)
 import Fuzz exposing (Fuzzer, float, int, list, string)
 import Test exposing (..)
 import Json.Encode as Encode
 import JsonUtil exposing (jsonFromString)
-import SimpleDecoder exposing (JsonValue(..), SDecoder, readJsonValue)
+import SimpleDecoder exposing (JsonValue(..), SimpleDecoder, readJsonValue)
 
 
 constructValueAtPath : JsonValue -> List String -> JsonValue
@@ -25,35 +25,190 @@ readJsonFromString =
 
 
 
-{- Let's use this to write some parsers!
+{-
 
-      How about:
-
-      type Animal
-        = Dog {name: String}
-        | Cat {name: String, lives: Int}
-
-   Example dog:
       {
-        "dog": "Fido"
+        "operations": [
+          {
+            "action": "createEnemy",
+            "name": "Zombie",
+            "hitPoints": 4
+          }, {
+            "action": "movePlayer",
+            "location": "forest"
+          }
+        ]
       }
 
-   Example cat:
-      {
-        "cat": {"lives": 3},
-        "name": "Sparky"
-      }
+
+   type Operation
+       = CreateEnemy { id : Int, hitPoints : Int }
+       | MovePlayer { location : String }
+
+
+         We'd like a function
+
+            JsonValue -> List Operation
+
+         Oh, but of course we might fail to parse, so we'd better make it
+
+            JsonValue -> Result String (List Operation)
 
 -}
 
 
-type Animal
+type Operation
+    = CreateEnemy { name : String, hitPoints : Int }
+    | MovePlayer { location : String }
+
+
+readOperations : JsonValue -> Result String (List Operation)
+readOperations jsonValue =
+    case jsonValue of
+        Obj obj ->
+            case Dict.get "operations" obj of
+                Just opsList ->
+                    readOperationsList opsList
+
+                Nothing ->
+                    Err ("Expected an object with field \"operations\", got: " ++ toString jsonValue)
+
+        _ ->
+            Err ("Expected an object, got " ++ toString jsonValue)
+
+
+readOperationsList : JsonValue -> Result String (List Operation)
+readOperationsList jsonValue =
+    case jsonValue of
+        Arr arr ->
+            collapseResults (List.map readOperation arr)
+
+        _ ->
+            Err ("Expected an array, got " ++ toString jsonValue)
+
+
+collapseResults : List (Result String a) -> Result String (List a)
+collapseResults results =
+    let
+        collapseResultsAcc accumulatedList results =
+            case results of
+                [] ->
+                    Ok (List.reverse accumulatedList)
+
+                first :: rest ->
+                    case first of
+                        Ok value ->
+                            collapseResultsAcc (value :: accumulatedList) rest
+
+                        Err str ->
+                            Err str
+    in
+        collapseResultsAcc [] results
+
+
+readOperation : JsonValue -> Result String Operation
+readOperation jsonValue =
+    case jsonValue of
+        Obj fields ->
+            case Dict.get "action" fields of
+                Just (String "createEnemy") ->
+                    readCreateEnemy fields
+
+                Just (String "movePlayer") ->
+                    readMovePlayer fields
+
+                Just (String s) ->
+                    Err ("Got invalid action: " ++ s)
+
+                Just v ->
+                    Err ("Expected a string, got: " ++ toString v)
+
+                Nothing ->
+                    Err ("Expected an object with field \"action\", got: " ++ toString jsonValue)
+
+        _ ->
+            Err ("Expected an object, got: " ++ toString jsonValue)
+
+
+readCreateEnemy : Dict String JsonValue -> Result String Operation
+readCreateEnemy fields =
+    case Dict.get "name" fields of
+        Just (String name) ->
+            case Dict.get "hitPoints" fields of
+                Just (Int hitPoints) ->
+                    Ok (CreateEnemy { name = name, hitPoints = hitPoints })
+
+                Just v ->
+                    Err ("Expected an integer, got: " ++ toString v)
+
+                Nothing ->
+                    Err "Expected an object with field \"hitPoints\""
+
+        Just v ->
+            Err ("Expected a string, got: " ++ toString v)
+
+        Nothing ->
+            Err "Expected an object with field \"name\""
+
+
+readMovePlayer : Dict String JsonValue -> Result String Operation
+readMovePlayer fields =
+    case Dict.get "location" fields of
+        Just (String location) ->
+            Ok (MovePlayer { location = location })
+
+        Just v ->
+            Err ("Expected a string, got: " ++ toString v)
+
+        Nothing ->
+            Err "Expected an object with field \"location\""
+
+
+decodeOperations : SimpleDecoder (List Operation)
+decodeOperations =
+    SimpleDecoder.list <|
+        SimpleDecoder.field "action" SimpleDecoder.string
+            |> SimpleDecoder.andThen
+                (\action ->
+                    case action of
+                        "createEnemy" ->
+                            SimpleDecoder.map2
+                                (\name hitPoints ->
+                                    CreateEnemy
+                                        { name = name
+                                        , hitPoints = hitPoints
+                                        }
+                                )
+                                (SimpleDecoder.field "name" SimpleDecoder.string)
+                                (SimpleDecoder.field "hitPoints" SimpleDecoder.int)
+
+                        "movePlayer" ->
+                            SimpleDecoder.map
+                                (\location -> MovePlayer { location = location })
+                                (SimpleDecoder.field "location" SimpleDecoder.string)
+
+                        _ ->
+                            SimpleDecoder.fail ("Got invalid action: " ++ action)
+                )
+
+
+type Pet
     = Dog { name : String }
     | Cat { name : String, lives : Int }
 
 
-decodeAnimalAttempt1 : JsonValue -> Result String Animal
-decodeAnimalAttempt1 jsonValue =
+decodePetsAttempt1 : JsonValue -> Result String (List Pet)
+decodePetsAttempt1 jsonValue =
+    case jsonValue of
+        Arr values ->
+            List.map decodePetAttempt1 values |> collapseResults
+
+        _ ->
+            Err "Expected an array, got a non-array"
+
+
+decodePetAttempt1 : JsonValue -> Result String Pet
+decodePetAttempt1 jsonValue =
     case jsonValue of
         Obj fields ->
             case Dict.get "dog" fields of
@@ -87,8 +242,13 @@ decodeAnimalAttempt1 jsonValue =
             Err "Please stop"
 
 
-decodeAnimal : SDecoder Animal
-decodeAnimal =
+decodePets : SimpleDecoder (List Pet)
+decodePets =
+    SimpleDecoder.list decodePet
+
+
+decodePet : SimpleDecoder Pet
+decodePet =
     SimpleDecoder.oneOf
         [ SimpleDecoder.map
             (\name -> Dog { name = name })
@@ -100,13 +260,24 @@ decodeAnimal =
         ]
 
 
-expectAnimalParse : String -> Animal -> Expectation
-expectAnimalParse jsonString animal =
+expectParses : List (SimpleDecoder a) -> String -> a -> Expectation
+expectParses decoders jsonString expected =
     readJsonFromString jsonString
         |> Expect.all
-            [ \val -> Expect.equal (Ok animal) (decodeAnimalAttempt1 val)
-            , \val -> Expect.equal (Ok animal) (decodeAnimal val)
-            ]
+            (List.map
+                (\decoder val -> Expect.equal (Ok expected) (decoder val))
+                decoders
+            )
+
+
+expectPetParse : String -> Pet -> Expectation
+expectPetParse =
+    expectParses [ decodePetAttempt1, decodePet ]
+
+
+expectOperationsParse : String -> List Operation -> Expectation
+expectOperationsParse =
+    expectParses [ readOperations, decodeOperations ]
 
 
 suite : Test
@@ -210,7 +381,58 @@ suite =
                             |> Expect.equal (Ok 12)
             ]
         , test "Dog parsing" <|
-            \_ -> expectAnimalParse "{\"dog\":\"Fido\"}" (Dog { name = "Fido" })
+            \_ -> expectPetParse "{\"dog\":\"Fido\"}" (Dog { name = "Fido" })
         , test "Cat parsing" <|
-            \_ -> expectAnimalParse "{\"cat\":{\"lives\":3},\"name\":\"Sparky\"}" (Cat { name = "Sparky", lives = 3 })
+            \_ -> expectPetParse "{\"cat\":{\"lives\":3},\"name\":\"Sparky\"}" (Cat { name = "Sparky", lives = 3 })
+        , test "Operations parsing" <|
+            let
+                json =
+                    """
+                        {
+                          "operations": [
+                            {
+                              "action": "createEnemy",
+                              "name": "Zombie",
+                              "hitPoints": 4
+                            }, {
+                              "action": "movePlayer",
+                              "location": "forest"
+                            }
+                          ]
+                        }
+                        """
+
+                expected =
+                    [ CreateEnemy { name = "Zombie", hitPoints = 4 }
+                    , MovePlayer { location = "forest" }
+                    ]
+            in
+                \_ ->
+                    expectOperationsParse json expected
+        , test "Operations failures" <|
+            let
+                json =
+                    """
+                        {
+                          "operations": [
+                            {
+                              "action": "createEnemy",
+                              "name": "Zombie",
+                              "hitPoints": "not a number"
+                            }, {
+                              "action": "movePlayer",
+                              "location": "forest"
+                            }
+                          ]
+                        }
+                        """
+
+                expected =
+                    [ CreateEnemy { name = "Zombie", hitPoints = 4 }
+                    , MovePlayer { location = "forest" }
+                    ]
+            in
+                \_ ->
+                    readOperations (readJsonFromString json)
+                        |> Expect.equal (Err "Expected an integer, got: String \"not a number\"")
         ]
