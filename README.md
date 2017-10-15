@@ -602,6 +602,7 @@ The good news is, every other function we've written here was actually taken
 straight from the `Json.Decode` API: replace `JsonDecoder` with `Decoder` and
 everything works just the same! And as I hope I've convinced you, even
 `Json.Decode` _did_ give you a `JsonValue` equivalent, you'd want to use the API
-functions anyway. I hope that now that you've figured out from first principles
-why the library works the way it does, you'll find it a little less mysterious
-and easier to work with.
+functions anyway. Now go read the [rest of the API](http://package.elm-lang.org/packages/elm-lang/core/5.1.1/Json-Decode): everything there is just an extension of the ideas we've worked out here. 
+I hope that now that you've figured out from first principles why the library 
+works the way it does, you'll find it a little less mysterious and easier to 
+work with.
