@@ -257,7 +257,7 @@ to help me think about it:
 some arbitrary type t. Since the parse may fail, the function returns a
 Result that could indicate a parse error.
 -}
-type alias SimpleDecoder t = JsonValue -> Result String t
+type alias JsonDecoder t = JsonValue -> Result String t
 ```
 From now on I'll use this type. But when you see it, remember that it's just a
 function that reads a `JsonValue` and produces a result. We're still in the
@@ -281,7 +281,7 @@ to decode each element. We can just use the implementation of
 ```elm
 {-| Decodes a JSON array, with each element decoded by the given decoder.
 -}
-list : SimpleDecoder a -> SimpleDecoder (List a)
+list : JsonDecoder a -> JsonDecoder (List a)
 list elementDecoder jsonValue =
     case jsonValue of
         Arr jsonValues ->
@@ -325,8 +325,8 @@ Let's tackle these one at a time.
 ### Reading fields
 
 Now that we've dealt with arrays, this seems pretty straightforward. We can do
-what we did there: write a function that takes a `SimpleDecoder` and a field
-name as arguments, and returns a new `SimpleDecoder` that expects to see an
+what we did there: write a function that takes a `JsonDecoder` and a field
+name as arguments, and returns a new `JsonDecoder` that expects to see an
 object that contains the given field and reads it with the given decoder. Here's
 how that looks:
 
@@ -334,7 +334,7 @@ how that looks:
 {-| Decodes the named field of the given JSON object using the given decoder.
 Returns an error if the given value isn't a JSON object.
 -}
-field : String -> SimpleDecoder t -> SimpleDecoder t
+field : String -> JsonDecoder t -> JsonDecoder t
 field name decoder jsonValue =
     case jsonValue of
         Obj dict ->
@@ -373,10 +373,10 @@ and combine exactly two fields):
 potentialMultifieldDecoder :
     (a -> b -> t)
     -> String
-    -> SimpleDecoder a
+    -> JsonDecoder a
     -> String
-    -> SimpleDecoder b
-    -> SimpleDecoder t
+    -> JsonDecoder b
+    -> JsonDecoder t
 ```
 This seems like a function we could implement, but it's frustrating that we
 _just_ wrote a function that decodes a field, and we're going to have to write
@@ -393,7 +393,7 @@ That function becomes:
 function to the successful result of decoding using both of the given
 decoders.
 -}
-object2 : (a -> b -> t) -> SimpleDecoder a -> SimpleDecoder b -> SimpleDecoder t
+object2 : (a -> b -> t) -> JsonDecoder a -> JsonDecoder b -> JsonDecoder t
 object2 f aDecoder bDecoder jsonValue =
     case ( aDecoder jsonValue, bDecoder jsonValue ) of
         ( Ok a, Ok b ) ->
@@ -427,7 +427,7 @@ already, apply the function to the underlying `a` and `b` values if and once
 they exist. Since they're only sort of values, the result is also only sort of a
 value.
 
-In our case, `SimpleDecoder a` represents a "sort-of `a`" -- an `a` that we
+In our case, `JsonDecoder a` represents a "sort-of `a`" -- an `a` that we
 might get by reading it out of a JSON value. It fits the pattern nicely! In that
 context, it's clear that `object2` is really just `map2`, and we should call it
 that for consistency with other elm libraries. Also, it makes it obvious that
@@ -436,14 +436,14 @@ a single argument. We can use this for more than just reading fields off of an
 object!
 
 ```elm
-map2 : (a -> b -> t) -> SimpleDecoder a -> SimpleDecoder b -> SimpleDecoder t
+map2 : (a -> b -> t) -> JsonDecoder a -> JsonDecoder b -> JsonDecoder t
 map2 = object2
 
 
 {-| Returns a decoder that returns the result of applying the given
 function to the successful result of decoding using the given decoder.
 -}
-map : (a -> t) -> SimpleDecoder a -> SimpleDecoder t
+map : (a -> t) -> JsonDecoder a -> JsonDecoder t
 map f decoder jsonValue =
     decoder jsonValue
         |> Result.map f
@@ -473,12 +473,12 @@ function" from above, so let's just take it directly as a (real) function. This
 function should take a successfully-decoded string, but what should it return?
 In the code we're trying to remove boilerplate from it returned
 `readCreateEnemy` and `readMovePlayer`, both of which can be thought of as
-`SimpleDecoder`s. So our boilerplate could take a `SimpleDecoder a` and a
-function `a -> SimpleDecoder b` and should return a `SimpleDecoder b`. Here's
+`JsonDecoder`s. So our boilerplate could take a `JsonDecoder a` and a
+function `a -> JsonDecoder b` and should return a `JsonDecoder b`. Here's
 that type all at once:
 
 ```elm
-(a -> SimpleDecoder b) -> SimpleDecoder a -> SimpleDecoder b
+(a -> JsonDecoder b) -> JsonDecoder a -> JsonDecoder b
 ```
 
 That type looks familiar too! It shows up in lots of elm packages under the name
@@ -516,7 +516,7 @@ the input JSON against the resulting second decoder. This allows a decoder
 that reads part of the JSON object before deciding how to parse the rest
 of the object.
 -}
-andThen : (a -> SimpleDecoder b) -> SimpleDecoder a -> SimpleDecoder b
+andThen : (a -> JsonDecoder b) -> JsonDecoder a -> JsonDecoder b
 andThen toB aDecoder jsonValue =
     case aDecoder jsonValue of
         Ok a ->
@@ -530,21 +530,21 @@ One last detail: Our boilerplate handles the generic problems, but using
 `andThen` we might find ourselves writing logic that wants to directly return a
 success with a particular value or a failure without running any more child
 decoders. We can't just return `Ok` or `Error` values in those cases because
-`andThen` wants us to return a `SimpleDecoder` -- which, remember, is a function
+`andThen` wants us to return a `JsonDecoder` -- which, remember, is a function
 that takes a `JsonValue` to a `Result`, not a `Result` itself. But we can do the
 next best thing:
 
 ```elm
 {-| Returns a decoder that always succeeds with the given value.
 -}
-succeed : a -> SimpleDecoder a
+succeed : a -> JsonDecoder a
 succeed a jsonValue =
     Ok a
 
 
 {-| Returns a decoder that always fails with the given error message.
 -}
-fail : String -> SimpleDecoder a
+fail : String -> JsonDecoder a
 fail str jsonValue =
     Err str
 ```
@@ -556,31 +556,31 @@ Now we've written everything we need to pull out all the boilerplate from
 out:
 
 ```elm
-readOperations : SimpleDecoder (List Operation)
+readOperations : JsonDecoder (List Operation)
 readOperations =
-    SimpleDecoder.list <|
-        SimpleDecoder.field "action" SimpleDecoder.string
-            |> SimpleDecoder.andThen
+    JsonDecoder.list <|
+        JsonDecoder.field "action" JsonDecoder.string
+            |> JsonDecoder.andThen
                 (\action ->
                     case action of
                         "createEnemy" ->
-                            SimpleDecoder.map2
+                            JsonDecoder.map2
                                 (\name hitPoints ->
                                     CreateEnemy
                                         { name = name
                                         , hitPoints = hitPoints
                                         }
                                 )
-                                (SimpleDecoder.field "name" SimpleDecoder.string)
-                                (SimpleDecoder.field "hitPoints" SimpleDecoder.int)
+                                (JsonDecoder.field "name" JsonDecoder.string)
+                                (JsonDecoder.field "hitPoints" JsonDecoder.int)
 
                         "movePlayer" ->
-                            SimpleDecoder.map
+                            JsonDecoder.map
                                 (\location -> MovePlayer { location = location })
-                                (SimpleDecoder.field "location" SimpleDecoder.string)
+                                (JsonDecoder.field "location" JsonDecoder.string)
 
                         _ ->
-                            SimpleDecoder.fail ("Got invalid action: " ++ action)
+                            JsonDecoder.fail ("Got invalid action: " ++ action)
                 )
 ```
 
@@ -599,7 +599,7 @@ the one we've been using here. It's implemented in native Javascript and doesn't
 give you access to the underlying data structures it uses.
 
 The good news is, every other function we've written here was actually taken
-straight from the `Json.Decode` API: replace `SimpleDecoder` with `Decoder` and
+straight from the `Json.Decode` API: replace `JsonDecoder` with `Decoder` and
 everything works just the same! And as I hope I've convinced you, even
 `Json.Decode` _did_ give you a `JsonValue` equivalent, you'd want to use the API
 functions anyway. I hope that now that you've figured out from first principles

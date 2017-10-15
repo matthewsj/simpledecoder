@@ -1,4 +1,4 @@
-module SimpleDecoderTests exposing (..)
+module JsonDecoderTests exposing (..)
 
 import Dict exposing (Dict)
 import Expect exposing (Expectation)
@@ -6,7 +6,7 @@ import Fuzz exposing (Fuzzer, float, int, list, string)
 import Test exposing (..)
 import Json.Encode as Encode
 import JsonUtil exposing (jsonFromString)
-import SimpleDecoder exposing (JsonValue(..), SimpleDecoder, readJsonValue)
+import JsonDecoder exposing (JsonValue(..), JsonDecoder, readJsonValue)
 
 
 constructValueAtPath : JsonValue -> List String -> JsonValue
@@ -164,32 +164,35 @@ readMovePlayer fields =
             Err "Expected an object with field \"location\""
 
 
-decodeOperations : SimpleDecoder (List Operation)
+decodeOperations : JsonDecoder (List Operation)
 decodeOperations =
-    SimpleDecoder.list <|
-        SimpleDecoder.field "action" SimpleDecoder.string
-            |> SimpleDecoder.andThen
-                (\action ->
-                    case action of
-                        "createEnemy" ->
-                            SimpleDecoder.map2
-                                (\name hitPoints ->
-                                    CreateEnemy
-                                        { name = name
-                                        , hitPoints = hitPoints
-                                        }
-                                )
-                                (SimpleDecoder.field "name" SimpleDecoder.string)
-                                (SimpleDecoder.field "hitPoints" SimpleDecoder.int)
+    JsonDecoder.field "operations"
+        (JsonDecoder.list
+            (JsonDecoder.field "action" JsonDecoder.string
+                |> JsonDecoder.andThen
+                    (\action ->
+                        case action of
+                            "createEnemy" ->
+                                JsonDecoder.map2
+                                    (\name hitPoints ->
+                                        CreateEnemy
+                                            { name = name
+                                            , hitPoints = hitPoints
+                                            }
+                                    )
+                                    (JsonDecoder.field "name" JsonDecoder.string)
+                                    (JsonDecoder.field "hitPoints" JsonDecoder.int)
 
-                        "movePlayer" ->
-                            SimpleDecoder.map
-                                (\location -> MovePlayer { location = location })
-                                (SimpleDecoder.field "location" SimpleDecoder.string)
+                            "movePlayer" ->
+                                JsonDecoder.map
+                                    (\location -> MovePlayer { location = location })
+                                    (JsonDecoder.field "location" JsonDecoder.string)
 
-                        _ ->
-                            SimpleDecoder.fail ("Got invalid action: " ++ action)
-                )
+                            _ ->
+                                JsonDecoder.fail ("Got invalid action: " ++ action)
+                    )
+            )
+        )
 
 
 type Pet
@@ -242,25 +245,25 @@ decodePetAttempt1 jsonValue =
             Err "Please stop"
 
 
-decodePets : SimpleDecoder (List Pet)
+decodePets : JsonDecoder (List Pet)
 decodePets =
-    SimpleDecoder.list decodePet
+    JsonDecoder.list decodePet
 
 
-decodePet : SimpleDecoder Pet
+decodePet : JsonDecoder Pet
 decodePet =
-    SimpleDecoder.oneOf
-        [ SimpleDecoder.map
+    JsonDecoder.oneOf
+        [ JsonDecoder.map
             (\name -> Dog { name = name })
-            (SimpleDecoder.field "dog" SimpleDecoder.string)
-        , SimpleDecoder.map2
+            (JsonDecoder.field "dog" JsonDecoder.string)
+        , JsonDecoder.map2
             (\name lives -> Cat { name = name, lives = lives })
-            (SimpleDecoder.field "name" SimpleDecoder.string)
-            (SimpleDecoder.at [ "cat", "lives" ] SimpleDecoder.int)
+            (JsonDecoder.field "name" JsonDecoder.string)
+            (JsonDecoder.at [ "cat", "lives" ] JsonDecoder.int)
         ]
 
 
-expectParses : List (SimpleDecoder a) -> String -> a -> Expectation
+expectParses : List (JsonDecoder a) -> String -> a -> Expectation
 expectParses decoders jsonString expected =
     readJsonFromString jsonString
         |> Expect.all
@@ -282,7 +285,7 @@ expectOperationsParse =
 
 suite : Test
 suite =
-    describe "SimpleDecoder"
+    describe "JsonDecoder"
         [ describe "readJsonValue"
             [ fuzz string "Decodes string" <|
                 \str ->
@@ -331,7 +334,7 @@ suite =
                         parsed =
                             readJsonFromString giphyString
                     in
-                        Expect.equal (SimpleDecoder.at [ "data", "image_url" ] Ok parsed)
+                        Expect.equal (JsonDecoder.at [ "data", "image_url" ] Ok parsed)
                             (Ok (String "https://media2.giphy.com/media/3oEjHSaIF3Oo9LjjXO/giphy.gif"))
             , fuzz (list string) "Test at on arbitrary paths" <|
                 \path ->
@@ -342,37 +345,37 @@ suite =
                         jsonValue =
                             constructValueAtPath nestedValue path
                     in
-                        Expect.equal (Ok nestedValue) (SimpleDecoder.at path Ok jsonValue)
+                        Expect.equal (Ok nestedValue) (JsonDecoder.at path Ok jsonValue)
             , fuzz string "string decoder" <|
                 \s ->
-                    Expect.equal (Ok s) (SimpleDecoder.string (String s))
+                    Expect.equal (Ok s) (JsonDecoder.string (String s))
             , fuzz int "int decoder" <|
                 \i ->
-                    Expect.equal (Ok i) (SimpleDecoder.int (Int i))
+                    Expect.equal (Ok i) (JsonDecoder.int (Int i))
             , fuzz float "float decoder on float input" <|
                 \f ->
-                    Expect.equal (Ok f) (SimpleDecoder.float (Float f))
+                    Expect.equal (Ok f) (JsonDecoder.float (Float f))
             , fuzz int "float decoder on int input" <|
                 \i ->
-                    Expect.equal (Ok (toFloat i)) (SimpleDecoder.float (Int i))
+                    Expect.equal (Ok (toFloat i)) (JsonDecoder.float (Int i))
             , fuzz (list int) "decodes lists of integers" <|
                 \ints ->
-                    SimpleDecoder.list SimpleDecoder.int (Arr (List.map Int ints))
+                    JsonDecoder.list JsonDecoder.int (Arr (List.map Int ints))
                         |> Expect.equal (Ok ints)
             , test "oneOf" <|
                 \_ ->
-                    SimpleDecoder.oneOf
-                        [ SimpleDecoder.int
-                        , SimpleDecoder.at [ "a", "b" ] SimpleDecoder.int
+                    JsonDecoder.oneOf
+                        [ JsonDecoder.int
+                        , JsonDecoder.at [ "a", "b" ] JsonDecoder.int
                         ]
                         (readJsonFromString "{\"a\": {\"b\": 12}}")
                         |> Expect.equal (Ok 12)
             , let
                 decoder =
-                    SimpleDecoder.field "interestingVar" SimpleDecoder.string
-                        |> SimpleDecoder.andThen
+                    JsonDecoder.field "interestingVar" JsonDecoder.string
+                        |> JsonDecoder.andThen
                             (\interestingVar ->
-                                SimpleDecoder.field interestingVar SimpleDecoder.int
+                                JsonDecoder.field interestingVar JsonDecoder.int
                             )
               in
                 test "andThen" <|

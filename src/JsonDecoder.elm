@@ -1,10 +1,10 @@
-module SimpleDecoder
+module JsonDecoder
     exposing
         ( JsonValue(..)
         , readJsonValue
         , toJsonValue
         , wrapPort
-        , SimpleDecoder
+        , JsonDecoder
         , string
         , int
         , float
@@ -26,7 +26,7 @@ module SimpleDecoder
 @docs JsonValue, readJsonValue, toJsonValue, wrapPort
 
 Functions and types for manipulating JsonValue values:
-@docs SimpleDecoder, string, int, float, bool, null, field, at, list, map, map2, oneOf, andThen, succeed, fail
+@docs JsonDecoder, string, int, float, bool, null, field, at, list, map, map2, oneOf, andThen, succeed, fail
 
 -}
 
@@ -186,7 +186,7 @@ null val jsonValue =
 some arbitrary type t. Since the parse may fail, the function returns a
 Result that could indicate a parse error.
 -}
-type alias SimpleDecoder t =
+type alias JsonDecoder t =
     JsonValue -> Result String t
 
 
@@ -197,7 +197,7 @@ type alias SimpleDecoder t =
 {-| Decodes the named field of the given JSON object using the given decoder.
 Returns an error if the given value isn't a JSON object.
 -}
-field : String -> SimpleDecoder t -> SimpleDecoder t
+field : String -> JsonDecoder t -> JsonDecoder t
 field name decoder jsonValue =
     case jsonValue of
         Obj dict ->
@@ -214,7 +214,7 @@ field name decoder jsonValue =
 
 {-| Decodes a nested JSON object, following the given fields.
 -}
-at : List String -> SimpleDecoder t -> SimpleDecoder t
+at : List String -> JsonDecoder t -> JsonDecoder t
 at path decoder jsonValue =
     case path of
         [] ->
@@ -255,7 +255,7 @@ collapseResults results =
 
 {-| Decodes a JSON array, with each element decoded by the given decoder.
 -}
-list : SimpleDecoder a -> SimpleDecoder (List a)
+list : JsonDecoder a -> JsonDecoder (List a)
 list elementDecoder jsonValue =
     case jsonValue of
         Arr jsonValues ->
@@ -268,7 +268,7 @@ list elementDecoder jsonValue =
 {-| Returns a decoder that returns the result of applying the given
 function to the successful result of decoding using the given decoder.
 -}
-map : (a -> t) -> SimpleDecoder a -> SimpleDecoder t
+map : (a -> t) -> JsonDecoder a -> JsonDecoder t
 map f decoder jsonValue =
     decoder jsonValue
         |> Result.map f
@@ -278,7 +278,7 @@ map f decoder jsonValue =
 function to the successful result of decoding using both of the given
 decoders.
 -}
-map2 : (a -> b -> t) -> SimpleDecoder a -> SimpleDecoder b -> SimpleDecoder t
+map2 : (a -> b -> t) -> JsonDecoder a -> JsonDecoder b -> JsonDecoder t
 map2 f aDecoder bDecoder jsonValue =
     case ( aDecoder jsonValue, bDecoder jsonValue ) of
         ( Ok a, Ok b ) ->
@@ -294,7 +294,7 @@ map2 f aDecoder bDecoder jsonValue =
 {-| Returns a decoder that tries each of the given decoders in turn when
 parsing its input, and that fails only if every decoder fails.
 -}
-oneOf : List (SimpleDecoder t) -> SimpleDecoder t
+oneOf : List (JsonDecoder t) -> JsonDecoder t
 oneOf decoders jsonValue =
     let
         orElse : (() -> Result x y) -> Result x y -> Result x y
@@ -320,7 +320,7 @@ the input JSON against the resulting second decoder. This allows a decoder
 that reads part of the JSON object before deciding how to parse the rest
 of the object.
 -}
-andThen : (a -> SimpleDecoder b) -> SimpleDecoder a -> SimpleDecoder b
+andThen : (a -> JsonDecoder b) -> JsonDecoder a -> JsonDecoder b
 andThen toB aDecoder jsonValue =
     case aDecoder jsonValue of
         Ok a ->
@@ -330,7 +330,7 @@ andThen toB aDecoder jsonValue =
             Err s
 
 
-andThen2 : (a -> SimpleDecoder b) -> SimpleDecoder a -> SimpleDecoder b
+andThen2 : (a -> JsonDecoder b) -> JsonDecoder a -> JsonDecoder b
 andThen2 toB aDecoder jsonValue =
     aDecoder jsonValue
         |> Result.map toB
@@ -338,14 +338,14 @@ andThen2 toB aDecoder jsonValue =
 
 {-| Returns a decoder that always succeeds with the given value.
 -}
-succeed : a -> SimpleDecoder a
+succeed : a -> JsonDecoder a
 succeed a jsonValue =
     Ok a
 
 
 {-| Returns a decoder that always fails with the given error message.
 -}
-fail : String -> SimpleDecoder a
+fail : String -> JsonDecoder a
 fail str jsonValue =
     Err str
 
@@ -355,7 +355,7 @@ fail str jsonValue =
 
 {-| Converts a simple decoder to a "real" decoder
 -}
-convertToDecoder : SimpleDecoder a -> Decoder a
+convertToDecoder : JsonDecoder a -> Decoder a
 convertToDecoder sdecoder =
     toJsonValue
         |> Decode.andThen
