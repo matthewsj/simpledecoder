@@ -195,23 +195,31 @@ Holy cow, this function is _huge!_ Somehow I needed nearly 100 lines of code
 just to read a pretty simple bit of JSON. And if the format were more
 complicated, this code would keep getting bigger.
 
-If you look it over, you can see why. As we're reading JSON a lot of things can
-go wrong, and elm's type system (rightly) forces us to handle every possible
-error. That leads to a lot of boilerplate. For instance, in `readCreateEnemy`,
-the first case of the first case handles the good path, and the entire rest of
-the function -- four more cases -- mechanically address all the ways reading
-could go wrong.
+## What's going on here?
 
-This not only makes the code tedious to write, it also makes it tedious to
-_read_. All that error handling code makes it very hard to look at this code and
-figure out what format it's trying to parse, which will become a problem if we
-ever need to change it.
+If you look the program over, you can see why. When we read from JSON, every step of the way there are things that could go wrong, and elm's type system (rightly) forces us to handle every possible error. That leads to a lot of boilerplate.
 
-We're not going to be able to get rid of that error handling code -- and we
-shouldn't want to. After all, we do legitimately need to deal with the fact that
-our input JSON might not have the shape we expect. But there's so much of it
-that it obscures our intent. So let's see if we can find a way to separate out
-the error handling code into its own library.
+For instance, in `readCreateEnemy`, the first case of the first case handles the good path, and the entire rest of the function -- four more cases -- mechanically address all the ways reading could go wrong. This not only makes the code tedious to write, it also makes it tedious to _read_.
+
+The problem is that the straightforward program we've written combines the
+details of two different concerns:
+* What we should do in the "good case" to turn our `JsonValue` into an
+`Operation` assuming the JSON has the shape we expect. This concern is specific
+to our particular program and the way we want to translate our expected JSON
+format to our program-specific `Operation` type.
+* How to detect if the input JSON doesn't have the expected shape and if so how
+to construct an appropriate error. This concern is _not_ specific to anything in
+our program. It seems likely that almost any program we write that involves
+parsing JSON is going to have some kind of expected shape and will want to
+signal an error if the input doesn't conform to it.
+
+The second concern is legitimate, of course -- we need to deal
+with the fact that our input JSON might not have the shape we expect. But that
+concern dominates so much of the code, and is so generic and boilerplate-ey,
+that it makes it hard to understand what our decoder does _other_ than find
+format errors. So let's see if we can find a way to separate out the code for
+our two concerns so that we can put the error handling code into its own
+library.
 
 ## Pulling out all that error handling code
 
@@ -242,7 +250,7 @@ int jsonValue =
 
         _ ->
             Err ("Expected an integer, got " ++ toString jsonValue)
-            
+
 -- ... and similar for float and bool
 
 ```
@@ -288,8 +296,8 @@ list elementDecoder jsonValue =
             collapseResults (List.map elementDecoder jsonValues)
         _ ->
             Err ("Expected an array, got " ++ toString jsonValue)
-            
-            
+
+
 {-| Groups a list of Results together into a result that either produces all the
 successes in a list if all are Ok, or the first error if there are any.
 -}
@@ -300,7 +308,7 @@ That's it!
 
 ## Objects
 
-Objects pose some problems of their own. 
+Objects pose some problems of their own.
 
 * For one thing, JSON objects have fields, and when we process an object we
   almost always want to get a specific named field and process that.
@@ -500,7 +508,7 @@ sort-of `b`. For instance, you can use
 ```elm
 Maybe.map (\x -> x + 1) maybeNumber
 ```
-to add 1 to `maybeNumber` if it exists, and 
+to add 1 to `maybeNumber` if it exists, and
 ```elm
 Maybe.andThen (\x -> if x >= 5 then (Just x) else Nothing) maybeNumber
 ```
@@ -592,6 +600,13 @@ and `hitPoints` fields, if it's `"movePlayer"` then it should have a `location`
 field, and anything else is illegal. I would much prefer to maintain this
 version of the parse than what we started with.
 
+It's worth reflecting on what we've done here. The only thing we did was try
+to abstract away the boilerplate involved in handling the cases where we're
+trying to decode a JSON value and discover it doesn't have the shape we
+expected. There's no magic involved here, everything was just short, relatively straightforward code, and yet we were able to transform an unreadable mess into
+something that basically makes sense, and in the process we got a nice library
+that we could use for other projects.
+
 ## Congratulations! You designed `Json.Decode`!
 
 The bad news is, the `Json.Decode` library doesn't have a `JsonValue` type like
@@ -602,7 +617,7 @@ The good news is, every other function we've written here was actually taken
 straight from the `Json.Decode` API: replace `JsonDecoder` with `Decoder` and
 everything works just the same! And as I hope I've convinced you, even
 `Json.Decode` _did_ give you a `JsonValue` equivalent, you'd want to use the API
-functions anyway. Now go read the [rest of the API](http://package.elm-lang.org/packages/elm-lang/core/5.1.1/Json-Decode): everything there is just an extension of the ideas we've worked out here. 
-I hope that now that you've figured out from first principles why the library 
-works the way it does, you'll find it a little less mysterious and easier to 
+functions anyway. Now go read the [rest of the API](http://package.elm-lang.org/packages/elm-lang/core/5.1.1/Json-Decode): everything there is just an extension of the ideas we've worked out here.
+I hope that now that you've figured out from first principles why the library
+works the way it does, you'll find it a little less mysterious and easier to
 work with.
